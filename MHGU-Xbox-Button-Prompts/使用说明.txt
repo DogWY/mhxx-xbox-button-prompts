@@ -1,0 +1,6 @@
+MHGU 1.4.0 · Xbox 手柄提示（物理位置布局）
+在 Astris 游戏库右键 MHGU → Open Mods Folder → LayeredFS Mods，复制整个 0.MHGU-Xbox-Button-Prompts 文件夹。在 Manage Mods 启用它，关闭 MHGU-Xbox-Probe，再启动游戏。可随时停用并重启恢复。
+
+游戏 Switch A/B/X/Y 分别显示 Xbox B/A/Y/X。L/R、ZL/ZR 对应 LB/RB、LT/RT。摇杆按下显示 LS/RS，＋/－显示 Menu/View 图形。适合实体按键位置对齐的映射，手柄输入配置由玩家保留。
+
+本包覆盖通用和简中任务按键图集，以及村内帮助、猎人笔记、教程、开始菜单和结算提示中明确写出的键名。本机兼容版沿用 3.HD 和视距增加60% 共用的标题归档，前缀 0. 用于让新键帽优先加载。标题提示已替换为 PRESS B。若其他 MOD 同时提供 title_chS.arc，可用 build_title.py 的 --title-archive 参数以该 MOD 的归档为底生成兼容版本。与其他 MOD 修改相同文件时请单独核对。
