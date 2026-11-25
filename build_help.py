@@ -3,19 +3,21 @@ import argparse
 from pathlib import Path
 import re
 import struct
+from tempfile import TemporaryDirectory
 import zlib
 
 from build_mod import ARCHIVES as BUTTON_ARCHIVES
 from build_mod import KEYS, keycap, patch_archive, patch_ui_archives, replace_texture
+from safe_paths import archive_name, require_disjoint, within
 
 ARCHIVES = ('resident_chS.arc', 'result_chS.arc', 'village/common_chS.arc',
             'village/hunter_note_chS.arc', 'tutorial/common_chS.arc',
             'npc/npcFakeArc_chS.arc', 'quest_chS.arc')
 BUTTON = {'A': 'B', 'B': 'A', 'X': 'Y', 'Y': 'X',
           'L': 'LB', 'R': 'RB', 'ZL': 'LT', 'ZR': 'RT'}
-# Only match a key or chord explicitly identified as a button in Chinese.
+# One trailing 键/按钮 can qualify an entire chord or list of alternatives.
 KEY = r'(?:Z[LR]|[ABXYLR])'
-CHORD = re.compile(r'(?<![a-zA-Z0-9_])' + KEY + r'(?:[+＋]' + KEY + r')*(?=键|按钮)')
+BUTTON_GROUP = re.compile(rf'(?<![a-zA-Z0-9_]){KEY}(?:[+＋、或和与/／]{KEY})*(?=键|按钮)')
 
 
 def update_gmd(gmd):
@@ -27,7 +29,7 @@ def update_gmd(gmd):
     if size > len(gmd) - 40:
         raise ValueError('Invalid GMD text size')
     text = gmd[-size:].decode('utf-8')
-    updated = CHORD.sub(lambda m: re.sub(KEY, lambda b: BUTTON[b[0]], m[0]), text)
+    updated = BUTTON_GROUP.sub(lambda m: re.sub(KEY, lambda b: BUTTON[b[0]], m[0]), text)
     if updated == text:
         return gmd
     body = updated.encode('utf-8')
@@ -37,16 +39,18 @@ def update_gmd(gmd):
 
 
 def build_help(romfs, module, font):
-    destination = module / 'romfs'
+    require_disjoint(romfs, module)
+    destination = within(module, 'romfs')
+    outputs = {}
     tiles = {cell: keycap(label, font) for cell, label in KEYS.items()}
     for name in ARCHIVES:
         rel = Path('nativeNX/chS/arc') / name
-        arc = bytearray((romfs / rel).read_bytes())
+        arc = bytearray(within(romfs, rel).read_bytes())
         if arc[:6] != b'ARC\0\x11\0':
             raise ValueError(f'Unknown ARC format in {name}')
         changes = 0
         for p in range(12, 12 + 80 * int.from_bytes(arc[6:8], 'little'), 80):
-            member = bytes(arc[p:p+64]).partition(b'\0')[0].decode().replace('\\','/')
+            member = archive_name(bytes(arc[p:p+64]))
             if not member.startswith('chS/table/'):
                 continue
             size, flags_size, offset = struct.unpack_from('<III', arc, p + 68)
@@ -62,23 +66,30 @@ def build_help(romfs, module, font):
                              flags_size & 0xe0000000 | len(new), len(arc))
             arc.extend(compressed)
             loose = Path('nativeNX') / (member + '.gmd')
-            if (romfs / loose).is_file():
-                loose_new = update_gmd((romfs / loose).read_bytes())
-                if loose_new != (romfs / loose).read_bytes():
-                    (destination / loose).parent.mkdir(parents=True, exist_ok=True)
-                    (destination / loose).write_bytes(loose_new)
+            loose_input = within(romfs, loose)
+            if loose_input.is_file():
+                loose_old = loose_input.read_bytes()
+                loose_new = update_gmd(loose_old)
+                if loose_new != loose_old:
+                    outputs[loose] = loose_new
             changes += 1
         if name == 'resident_chS.arc':
             arc = patch_ui_archives(arc, font, b'chS\\', b'eng\\')
         if name == 'quest_chS.arc':
             arc = patch_archive(arc, BUTTON_ARCHIVES['chS/arc/quest_chS.arc'], tiles)
         if changes or name in ('resident_chS.arc', 'quest_chS.arc'):
-            (destination / rel).parent.mkdir(parents=True, exist_ok=True)
-            (destination / rel).write_bytes(arc)
+            outputs[rel] = arc
         print(name, changes)
     rel = Path('nativeNX/eng/GUI/02_common/font/button_festa_00_ID.tex')
-    (destination / rel).parent.mkdir(parents=True, exist_ok=True)
-    (destination / rel).write_bytes(replace_texture((romfs / rel).read_bytes(), tiles))
+    outputs[rel] = replace_texture(within(romfs, rel).read_bytes(), tiles)
+    # Validate every destination before modifying a module from an earlier build.
+    targets = [(within(destination, rel), data) for rel, data in outputs.items()]
+    for target, data in targets:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        with TemporaryDirectory(dir=target.parent) as temp:
+            pending = Path(temp) / 'resource'
+            pending.write_bytes(data)
+            pending.replace(target)
 
 
 if __name__ == '__main__':
